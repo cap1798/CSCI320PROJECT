@@ -6,7 +6,6 @@ import hashlib
 import os
 import datetime
 import random
-import "config.txt"
 
 
 # Hashes a password with a random salt.
@@ -165,8 +164,9 @@ class LoginFrame(tk.Frame):
             return
 
         try:
+            # CORRECTED: "User", "UserID", "Password", "Username" -> users, userid, password, username
             self.controller.curs.execute(
-                'SELECT "UserID", "Password" FROM "User" WHERE "Username" = %s',
+                'SELECT userid, password FROM users WHERE username = %s',
                 (username,)
             )
             user_data = self.controller.curs.fetchone()
@@ -175,8 +175,9 @@ class LoginFrame(tk.Frame):
                 user_id, stored_password = user_data
 
                 if check_password(stored_password, password):
+                    # CORRECTED: "User", "LastAccessDate", "UserID" -> users, lastaccessdate, userid
                     self.controller.curs.execute(
-                        'UPDATE "User" SET "LastAccessDate" = %s WHERE "UserID" = %s',
+                        'UPDATE users SET lastaccessdate = %s WHERE userid = %s',
                         (datetime.datetime.now(), user_id)
                     )
                     self.controller.conn.commit()
@@ -247,9 +248,10 @@ class RegisterFrame(tk.Frame):
         hashed_password = hash_password(password)
 
         try:
+            # CORRECTED: "User" and all columns to lowercase
             self.controller.curs.execute(
                 """
-                INSERT INTO "User" ("FirstName", "LastName", "Email", "Username", "Password", "CreationDate")
+                INSERT INTO users (firstname, lastname, email, username, password, creationdate)
                 VALUES (%s, %s, %s, %s, %s, %s)
                 """,
                 (fname, lname, email, username, hashed_password, datetime.datetime.now())
@@ -309,8 +311,9 @@ class MainAppFrame(tk.Frame):
     def refresh_data(self):
         if self.controller.current_user_id:
             try:
+                # CORRECTED: "FirstName", "User", "UserID" -> firstname, users, userid
                 self.controller.curs.execute(
-                    'SELECT "FirstName" FROM "User" WHERE "UserID" = %s',
+                    'SELECT firstname FROM users WHERE userid = %s',
                     (self.controller.current_user_id,)
                 )
                 user_name = self.controller.curs.fetchone()[0]
@@ -382,24 +385,25 @@ class CollectionsFrame(tk.Frame):
             return
 
         try:
+            # CORRECTED: All tables and columns to lowercase
             sql = """
                 SELECT 
-                    c."CollectionID",
-                    c."Name", 
-                    COUNT(DISTINCT cg."GameID") AS "GameCount",
-                    COALESCE(SUM(p."Duration"), 0) AS "TotalDurationMinutes"
+                    c.collectionid,
+                    c.name, 
+                    COUNT(DISTINCT cg.gameid) AS gamecount,
+                    COALESCE(SUM(p.duration), 0) AS totaldurationminutes
                 FROM 
-                    "Collection" c
+                    collection c
                 LEFT JOIN 
-                    "CollectionGame" cg ON c."CollectionID" = cg."CollectionID"
+                    collectiongame cg ON c.collectionid = cg.collectionid
                 LEFT JOIN 
-                    "Plays" p ON cg."GameID" = p."GameID" AND c."UserID" = p."UserID"
+                    plays p ON cg.gameid = p.gameid AND c.userid = p.userid
                 WHERE 
-                    c."UserID" = %s
+                    c.userid = %s
                 GROUP BY 
-                    c."CollectionID", c."Name"
+                    c.collectionid, c.name
                 ORDER BY 
-                    c."Name" ASC;
+                    c.name ASC;
             """
             self.controller.curs.execute(sql, (self.controller.current_user_id,))
 
@@ -420,7 +424,8 @@ class CollectionsFrame(tk.Frame):
             return
 
         try:
-            sql = 'INSERT INTO "Collection" ("UserID", "Name") VALUES (%s, %s)'
+            # CORRECTED: "Collection", "UserID", "Name" -> collection, userid, name
+            sql = 'INSERT INTO collection (userid, name) VALUES (%s, %s)'
             self.controller.curs.execute(sql, (self.controller.current_user_id, new_name))
             self.controller.conn.commit()
 
@@ -460,7 +465,8 @@ class CollectionsFrame(tk.Frame):
             return
 
         try:
-            sql = 'UPDATE "Collection" SET "Name" = %s WHERE "CollectionID" = %s AND "UserID" = %s'
+            # CORRECTED: "Collection", "Name", "CollectionID", "UserID" -> collection, name, collectionid, userid
+            sql = 'UPDATE collection SET name = %s WHERE collectionid = %s AND userid = %s'
             self.controller.curs.execute(sql, (new_name, collection_id, self.controller.current_user_id))
             self.controller.conn.commit()
             self.load_collections()
@@ -484,10 +490,12 @@ class CollectionsFrame(tk.Frame):
             return
 
         try:
-            sql_games = 'DELETE FROM "CollectionGame" WHERE "CollectionID" = %s'
+            # CORRECTED: "CollectionGame", "CollectionID" -> collectiongame, collectionid
+            sql_games = 'DELETE FROM collectiongame WHERE collectionid = %s'
             self.controller.curs.execute(sql_games, (collection_id,))
 
-            sql_coll = 'DELETE FROM "Collection" WHERE "CollectionID" = %s AND "UserID" = %s'
+            # CORRECTED: "Collection", "CollectionID", "UserID" -> collection, collectionid, userid
+            sql_coll = 'DELETE FROM collection WHERE collectionid = %s AND userid = %s'
             self.controller.curs.execute(sql_coll, (collection_id, self.controller.current_user_id))
 
             self.controller.conn.commit()
@@ -504,9 +512,10 @@ class CollectionsFrame(tk.Frame):
             return
 
         try:
+            # CORRECTED: "GameID", "CollectionGame", "CollectionID" -> gameid, collectiongame, collectionid
             sql = """
-                SELECT "GameID" FROM "CollectionGame" 
-                WHERE "CollectionID" = %s 
+                SELECT gameid FROM collectiongame 
+                WHERE collectionid = %s 
                 ORDER BY random() LIMIT 1
             """
             self.controller.curs.execute(sql, (collection_id,))
@@ -522,8 +531,9 @@ class CollectionsFrame(tk.Frame):
             if not duration:
                 return
 
+            # CORRECTED: "Plays" and all columns to lowercase
             sql_play = """
-                INSERT INTO "Plays" ("UserID", "GameID", "PlayDateTime", "Duration")
+                INSERT INTO plays (userid, gameid, playdatetime, duration)
                 VALUES (%s, %s, %s, %s)
             """
             self.controller.curs.execute(sql_play,
@@ -590,12 +600,14 @@ class CollectionDetailWindow(tk.Toplevel):
             self.tree.delete(item)
 
         try:
+            # CORRECTED: "GameID", "Title", "ESRB Rating", "VideoGame", "CollectionGame", "CollectionID"
+            # -> gameid, title, esrb_rating, videogame, collectiongame, collectionid
             sql = """
-                SELECT g."GameID", g."Title", g."ESRB Rating"
-                FROM "VideoGame" g
-                JOIN "CollectionGame" cg ON g."GameID" = cg."GameID"
-                WHERE cg."CollectionID" = %s
-                ORDER BY g."Title" ASC;
+                SELECT g.gameid, g.title, g.esrb_rating
+                FROM videogame g
+                JOIN collectiongame cg ON g.gameid = cg.gameid
+                WHERE cg.collectionid = %s
+                ORDER BY g.title ASC;
             """
             self.controller.curs.execute(sql, (self.collection_id,))
 
@@ -619,7 +631,8 @@ class CollectionDetailWindow(tk.Toplevel):
             return
 
         try:
-            sql = 'DELETE FROM "CollectionGame" WHERE "CollectionID" = %s AND "GameID" = %s'
+            # CORRECTED: "CollectionGame", "CollectionID", "GameID" -> collectiongame, collectionid, gameid
+            sql = 'DELETE FROM collectiongame WHERE collectionid = %s AND gameid = %s'
             self.controller.curs.execute(sql, (self.collection_id, game_id))
             self.controller.conn.commit()
 
@@ -727,61 +740,63 @@ class SearchFrame(tk.Frame):
         self.search_results_data = []
 
         try:
+            # CORRECTED: All tables, columns, and aliases to lowercase
             base_sql = """
                 SELECT 
-                    g."GameID", 
-                    g."Title",
-                    g."ESRB Rating",
-                    STRING_AGG(DISTINCT p."Name", ', ') AS "Platforms",
-                    STRING_AGG(DISTINCT dev."Name", ', ') AS "Developers",
-                    STRING_AGG(DISTINCT pub."Name", ', ') AS "Publishers",
-                    COALESCE(SUM(pl."Duration"), 0) AS "TotalPlaytime",
-                    pu."StarRating",
-                    MIN(EXTRACT(YEAR FROM gp."ReleaseDate")) AS "ReleaseYear",
-                    MIN(gp."Price") AS "MinPrice",
-                    MIN(gp."ReleaseDate") AS "MinReleaseDate"
+                    g.gameid, 
+                    g.title,
+                    g.esrb_rating,
+                    STRING_AGG(DISTINCT p.name, ', ') AS platforms,
+                    STRING_AGG(DISTINCT dev.name, ', ') AS developers,
+                    STRING_AGG(DISTINCT pub.name, ', ') AS publishers,
+                    COALESCE(SUM(pl.duration), 0) AS totalplaytime,
+                    pu.starrating,
+                    MIN(EXTRACT(YEAR FROM gp.releasedate)) AS releaseyear,
+                    MIN(gp.price) AS minprice,
+                    MIN(gp.releasedate) AS minreleasedate
                 FROM 
-                    "VideoGame" g
-                LEFT JOIN "GamePlatform" gp ON g."GameID" = gp."GameID"
-                LEFT JOIN "Platform" p ON gp."PlatformID" = p."PlatformID"
-                LEFT JOIN "GameDeveloper" gd ON g."GameID" = gd."GameID"
-                LEFT JOIN "Company" dev ON gd."CompanyID" = dev."CompanyID"
-                LEFT JOIN "GamePublisher" gpub ON g."GameID" = gpub."GameID"
-                LEFT JOIN "Company" pub ON gpub."CompanyID" = pub."CompanyID"
-                LEFT JOIN "GameGenre" gg ON g."GameID" = gg."GameID"
-                LEFT JOIN "Genres" gen ON gg."GenreID" = gen."GenreID"
-                LEFT JOIN "Plays" pl ON g."GameID" = pl."GameID" AND pl."UserID" = %s
-                LEFT JOIN "Purchases" pu ON g."GameID" = pu."GameID" AND pu."UserID" = %s
+                    videogame g
+                LEFT JOIN gameplatform gp ON g.gameid = gp.gameid
+                LEFT JOIN platform p ON gp.platformid = p.platformid
+                LEFT JOIN gamedeveloper gd ON g.gameid = gd.gameid
+                LEFT JOIN company dev ON gd.companyid = dev.companyid
+                LEFT JOIN gamepublisher gpub ON g.gameid = gpub.gameid
+                LEFT JOIN company pub ON gpub.companyid = pub.companyid
+                LEFT JOIN gamegenre gg ON g.gameid = gg.gameid
+                LEFT JOIN genres gen ON gg.genreid = gen.genreid
+                LEFT JOIN plays pl ON g.gameid = pl.gameid AND pl.userid = %s
+                LEFT JOIN purchases pu ON g.gameid = pu.gameid AND pu.userid = %s
                 WHERE 1=1
             """
 
             where_clauses = []
             params = [self.controller.current_user_id, self.controller.current_user_id]
 
+            # CORRECTED: All query columns to lowercase
             if self.title_entry.get():
-                where_clauses.append('g."Title" ILIKE %s')
+                where_clauses.append('g.title ILIKE %s')
                 params.append(f"%{self.title_entry.get()}%")
 
             if self.dev_entry.get():
-                where_clauses.append('dev."Name" ILIKE %s')
+                where_clauses.append('dev.name ILIKE %s')
                 params.append(f"%{self.dev_entry.get()}%")
 
             if self.pub_entry.get():
-                where_clauses.append('pub."Name" ILIKE %s')
+                where_clauses.append('pub.name ILIKE %s')
                 params.append(f"%{self.pub_entry.get()}%")
 
             if self.genre_entry.get():
-                where_clauses.append('gen."Name" ILIKE %s')
+                where_clauses.append('gen.name ILIKE %s')
                 params.append(f"%{self.genre_entry.get()}%")
 
             if self.platform_entry.get():
-                where_clauses.append('p."Name" ILIKE %s')
+                where_clauses.append('p.name ILIKE %s')
                 params.append(f"%{self.platform_entry.get()}%")
 
             if self.year_entry.get():
                 try:
                     year = int(self.year_entry.get())
-                    where_clauses.append('EXTRACT(YEAR FROM gp."ReleaseDate") = %s')
+                    where_clauses.append('EXTRACT(YEAR FROM gp.releasedate) = %s')
                     params.append(year)
                 except ValueError:
                     messagebox.showwarning("Warning", "Invalid Release Year. Must be a number. Year filter ignored.")
@@ -789,7 +804,7 @@ class SearchFrame(tk.Frame):
             if self.price_entry.get():
                 try:
                     price = float(self.price_entry.get())
-                    where_clauses.append('gp."Price" <= %s')
+                    where_clauses.append('gp.price <= %s')
                     params.append(price)
                 except ValueError:
                     messagebox.showwarning("Warning", "Invalid Price. Must be a number. Price filter ignored.")
@@ -797,9 +812,10 @@ class SearchFrame(tk.Frame):
             if where_clauses:
                 base_sql += " AND " + " AND ".join(where_clauses)
 
+            # CORRECTED: GROUP BY columns and ORDER BY alias
             base_sql += """
-                GROUP BY g."GameID", g."Title", g."ESRB Rating", pu."StarRating"
-                ORDER BY g."Title" ASC, "MinReleaseDate" ASC;
+                GROUP BY g.gameid, g.title, g.esrb_rating, pu.starrating
+                ORDER BY g.title ASC, minreleasedate ASC;
             """
 
             self.controller.curs.execute(base_sql, params)
@@ -874,14 +890,16 @@ class SearchFrame(tk.Frame):
             return
 
         try:
+            # CORRECTED: "PlatformID", "UserPlatform", "UserID" -> platformid, userplatform, userid
             self.controller.curs.execute(
-                'SELECT "PlatformID" FROM "UserPlatform" WHERE "UserID" = %s',
+                'SELECT platformid FROM userplatform WHERE userid = %s',
                 (self.controller.current_user_id,)
             )
             user_platforms = {row[0] for row in self.controller.curs.fetchall()}
 
+            # CORRECTED: "PlatformID", "GamePlatform", "GameID" -> platformid, gameplatform, gameid
             self.controller.curs.execute(
-                'SELECT "PlatformID" FROM "GamePlatform" WHERE "GameID" = %s',
+                'SELECT platformid FROM gameplatform WHERE gameid = %s',
                 (game_id,)
             )
             game_platforms = {row[0] for row in self.controller.curs.fetchall()}
@@ -898,8 +916,10 @@ class SearchFrame(tk.Frame):
             return
 
         try:
+            # CORRECTED: "CollectionID", "Name", "Collection", "UserID", "Name" ->
+            # collectionid, name, collection, userid, name
             self.controller.curs.execute(
-                'SELECT "CollectionID", "Name" FROM "Collection" WHERE "UserID" = %s ORDER BY "Name"',
+                'SELECT collectionid, name FROM collection WHERE userid = %s ORDER BY name',
                 (self.controller.current_user_id,)
             )
             collections = self.controller.curs.fetchall()
@@ -915,8 +935,9 @@ class SearchFrame(tk.Frame):
             if choice:
                 chosen_collection_id = [cid for cid, name in collections if name == choice][0]
 
+                # CORRECTED: "CollectionGame", "CollectionID", "GameID" -> collectiongame, collectionid, gameid
                 self.controller.curs.execute(
-                    'INSERT INTO "CollectionGame" ("CollectionID", "GameID") VALUES (%s, %s)',
+                    'INSERT INTO collectiongame (collectionid, gameid) VALUES (%s, %s)',
                     (chosen_collection_id, game_id)
                 )
                 self.controller.conn.commit()
@@ -977,11 +998,12 @@ class SearchFrame(tk.Frame):
             return
 
         try:
+            # CORRECTED: All tables and columns to lowercase
             sql = """
-                INSERT INTO "Purchases" ("UserID", "GameID", "StarRating")
+                INSERT INTO purchases (userid, gameid, starrating)
                 VALUES (%s, %s, %s)
-                ON CONFLICT ("UserID", "GameID") 
-                DO UPDATE SET "StarRating" = EXCLUDED."StarRating";
+                ON CONFLICT (userid, gameid) 
+                DO UPDATE SET starrating = EXCLUDED.starrating;
             """
             self.controller.curs.execute(sql, (self.controller.current_user_id, game_id, rating))
             self.controller.conn.commit()
@@ -1005,8 +1027,9 @@ class SearchFrame(tk.Frame):
             return
 
         try:
+            # CORRECTED: "Plays" and all columns to lowercase
             sql = """
-                INSERT INTO "Plays" ("UserID", "GameID", "PlayDateTime", "Duration")
+                INSERT INTO plays (userid, gameid, playdatetime, duration)
                 VALUES (%s, %s, %s, %s)
             """
             self.controller.curs.execute(sql,
@@ -1090,10 +1113,11 @@ class SocialFrame(tk.Frame):
             return
 
         try:
+            # CORRECTED: "UserID", "Username", "Email", "User" -> userid, username, email, users
             sql = """
-                SELECT "UserID", "Username", "Email" 
-                FROM "User" 
-                WHERE "Email" ILIKE %s AND "UserID" != %s
+                SELECT userid, username, email 
+                FROM users 
+                WHERE email ILIKE %s AND userid != %s
             """
             self.controller.curs.execute(sql, (f"%{email_query}%", self.controller.current_user_id))
 
@@ -1113,12 +1137,13 @@ class SocialFrame(tk.Frame):
             return
 
         try:
+            # CORRECTED: All tables and columns to lowercase
             sql = """
-                SELECT u."UserID", u."Username", u."Email", f."FollowDate"
-                FROM "Follows" f
-                JOIN "User" u ON f."FollowedID" = u."UserID"
-                WHERE f."FollowerID" = %s
-                ORDER BY u."Username" ASC;
+                SELECT u.userid, u.username, u.email, f.followdate
+                FROM follows f
+                JOIN users u ON f.followedid = u.userid
+                WHERE f.followerid = %s
+                ORDER BY u.username ASC;
             """
             self.controller.curs.execute(sql, (self.controller.current_user_id,))
 
@@ -1141,8 +1166,9 @@ class SocialFrame(tk.Frame):
         user_id, username, _ = self.search_tree.item(selected_item)['values']
 
         try:
+            # CORRECTED: "Follows", "FollowerID", "FollowedID", "FollowDate" -> follows, followerid, followedid, followdate
             sql = """
-                INSERT INTO "Follows" ("FollowerID", "FollowedID", "FollowDate")
+                INSERT INTO follows (followerid, followedid, followdate)
                 VALUES (%s, %s, %s)
             """
             self.controller.curs.execute(sql, (self.controller.current_user_id, user_id, datetime.datetime.now()))
@@ -1171,9 +1197,10 @@ class SocialFrame(tk.Frame):
             return
 
         try:
+            # CORRECTED: "Follows", "FollowerID", "FollowedID" -> follows, followerid, followedid
             sql = """
-                DELETE FROM "Follows" 
-                WHERE "FollowerID" = %s AND "FollowedID" = %s
+                DELETE FROM follows 
+                WHERE followerid = %s AND followedid = %s
             """
             self.controller.curs.execute(sql, (self.controller.current_user_id, user_id))
             self.controller.conn.commit()
