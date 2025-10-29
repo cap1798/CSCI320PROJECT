@@ -74,8 +74,8 @@ class App(tk.Tk):
 
         container = tk.Frame(self)
         container.pack(side="top", fill="both", expand=True)
-        container.grid_row_configure(0, weight=1)
-        container.grid_column_configure(0, weight=1)
+        container.grid_rowconfigure(0, weight=1)
+        container.grid_columnconfigure(0, weight=1)
 
         self.frames = {}
         for F in (LoginFrame, RegisterFrame, MainAppFrame):
@@ -327,10 +327,10 @@ class MainAppFrame(tk.Frame):
 
 
 # The frame for the "My Collections" tab.
-class CollectionsFrame(tk.Frame):
+class CollectionsFrame(ttk.Frame):
     # Initializes the collection management UI.
     def __init__(self, parent, controller):
-        tk.Frame.__init__(self, parent, padding="10")
+        ttk.Frame.__init__(self, parent, padding="10")
         self.controller = controller
 
         list_frame = ttk.Frame(self)
@@ -649,10 +649,10 @@ class CollectionDetailWindow(tk.Toplevel):
 
 
 # The frame for the "Search Games" tab.
-class SearchFrame(tk.Frame):
+class SearchFrame(ttk.Frame):
     # Initializes the game search UI.
     def __init__(self, parent, controller):
-        tk.Frame.__init__(self, parent, padding="10")
+        ttk.Frame.__init__(self, parent, padding="10")
         self.controller = controller
         self.search_results_data = []
 
@@ -1047,10 +1047,10 @@ class SearchFrame(tk.Frame):
 
 
 # The frame for the "Social" tab.
-class SocialFrame(tk.Frame):
+class SocialFrame(ttk.Frame):
     # Initializes the social UI (search, follow, unfollow).
     def __init__(self, parent, controller):
-        tk.Frame.__init__(self, parent, padding="10")
+        ttk.Frame.__init__(self, parent, padding="10")
         self.controller = controller
 
         find_frame = ttk.Frame(self, padding="10")
