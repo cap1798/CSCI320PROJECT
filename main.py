@@ -1,3 +1,4 @@
+import re
 import psycopg
 from sshtunnel import SSHTunnelForwarder
 import tkinter as tk
@@ -237,18 +238,43 @@ class RegisterFrame(tk.Frame):
     def register(self):
         fname = self.fname_entry.get()
         lname = self.lname_entry.get()
-        email = self.email_entry.get()
-        username = self.username_entry.get()
+        email = self.email_entry.get().strip().lower()
+        username = self.username_entry.get().strip().lower()
         password = self.password_entry.get()
 
         if not all([fname, lname, email, username, password]):
             messagebox.showerror("Error", "Please fill in all fields.")
             return
 
+        # Validate email format
+        if not re.match(r"[^@]+@[^@]+\.[^@]+", email):
+            messagebox.showerror("Error", "Invalid email format.")
+            return
+
         hashed_password = hash_password(password)
 
         try:
-            # CORRECTED: "User" and all columns to lowercase
+            # Explicitly check if username or email already exists
+            self.controller.curs.execute(
+                "SELECT username, email FROM users WHERE username = %s OR email = %s",
+                (username, email)
+            )
+            existing_user = self.controller.curs.fetchone()
+
+            if existing_user:
+                existing_username, existing_email = existing_user
+                if existing_username == username:
+                    messagebox.showerror("Error", "Username already exists.")
+                elif existing_email == email:
+                    messagebox.showerror("Error", "Email already exists.")
+                return
+
+            # Reset sequence if necessary (to avoid "Key (userid) already exists" error)
+            self.controller.curs.execute(
+                "SELECT setval('users_userid_seq', (SELECT MAX(userid) FROM users));"
+            )
+
+            # If no duplicates, proceed with the insertion
             self.controller.curs.execute(
                 """
                 INSERT INTO users (firstname, lastname, email, username, password, creationdate)
@@ -258,18 +284,13 @@ class RegisterFrame(tk.Frame):
             )
             self.controller.conn.commit()
             messagebox.showinfo("Success", "Account created successfully! Please log in.")
-            for entry in [self.fname_entry, self.lname_entry, self.email_entry, self.username_entry,
-                          self.password_entry]:
+            for entry in [self.fname_entry, self.lname_entry, self.email_entry, self.username_entry, self.password_entry]:
                 entry.delete(0, 'end')
             self.controller.show_frame("LoginFrame")
 
         except psycopg.Error as e:
             self.controller.conn.rollback()
-            if e.diag.sqlstate == '23505':
-                messagebox.showerror("Error", "Username or email already exists.")
-            else:
-                messagebox.showerror("Database Error", f"An error occurred: {e}")
-
+            messagebox.showerror("Database Error", f"An unexpected error occurred: {e}")
 
 # The main application frame, containing the tabbed interface.
 class MainAppFrame(tk.Frame):
@@ -424,7 +445,12 @@ class CollectionsFrame(ttk.Frame):
             return
 
         try:
-            # CORRECTED: "Collection", "UserID", "Name" -> collection, userid, name
+            # Reset sequence for collectionid to avoid "Key (collectionid) already exists" error
+            self.controller.curs.execute(
+                "SELECT setval('collection_collectionid_seq', (SELECT MAX(collectionid) FROM collection));"
+            )
+
+            # Insert the new collection
             sql = 'INSERT INTO collection (userid, name) VALUES (%s, %s)'
             self.controller.curs.execute(sql, (self.controller.current_user_id, new_name))
             self.controller.conn.commit()
