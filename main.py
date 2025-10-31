@@ -8,7 +8,6 @@ import os
 import datetime
 import random
 
-
 # Hashes a password with a random salt.
 def hash_password(password):
     salt = os.urandom(16)
@@ -754,6 +753,25 @@ class SearchFrame(ttk.Frame):
         action_frame = ttk.Frame(self)
         action_frame.pack(side="bottom", fill="x", pady=(10, 0))
 
+       # Add dropdown or buttons for sorting options
+        sort_frame = ttk.Frame(self)
+        sort_frame.pack(side="top", fill="x", pady=(5, 10))
+
+        # Dropdown for sorting options
+        sort_label = ttk.Label(sort_frame, text="Sort by:")
+        sort_label.pack(side="left", padx=5)
+
+        self.sort_var = tk.StringVar(value="Title ASC")
+        sort_dropdown = ttk.OptionMenu(
+        sort_frame, self.sort_var,
+            "Title ASC", "Title DESC", "Price ASC", "Price DESC",
+            "Genre ASC", "Genre DESC", "Year ASC", "Year DESC"
+        )
+        sort_dropdown.pack(side="left", padx=5)
+        # Apply sorting button
+        sort_button = ttk.Button(sort_frame, text="Apply Sort", command=self.apply_sort)
+        sort_button.pack(side="left", padx=5)
+
         ttk.Button(action_frame, text="Add Selected to Collection...", command=self.add_to_collection).pack(side="left",
                                                                                                             padx=2)
         ttk.Button(action_frame, text="Rate Selected Game...", command=self.rate_game).pack(side="left", padx=2)
@@ -869,32 +887,33 @@ class SearchFrame(ttk.Frame):
     # Sorts the treeview by a column without re-querying.
     def sort_column(self, col, reverse):
         try:
-            if col == "My Playtime":
+            if col == "Price":
+                data = []
+                for item in self.tree.get_children(''):
+                    price_val = self.tree.set(item, col)
+                    if price_val == "N/A":  # Handle missing values
+                        data.append((-1.0, item))
+                    else:
+                        price_val = price_val.replace("$", "")  # Remove dollar sign
+                        data.append((float(price_val), item))  # Convert to float
+            elif col == "My Playtime":
                 data = [(float(self.tree.set(item, "My PlaytimeNum")), item) for item in self.tree.get_children('')]
             elif col == "My Rating":
                 data = [(float(self.tree.set(item, "My RatingNum") or -1), item) for item in self.tree.get_children('')]
             elif col == "Year":
-                data = [(float(self.tree.set(item, col) if self.tree.set(item, col) != "N/A" else 0), item) for item in
-                        self.tree.get_children('')]
-            elif col == "Price":
-                data = []
-                for item in self.tree.get_children(''):
-                    price_val = self.tree.set(item, col)
-                    if price_val == "N/A":
-                        data.append((-1.0, item))
-                    else:
-                        data.append((float(price_val.replace("$", "")), item))
+                data = [(float(self.tree.set(item, col) if self.tree.set(item, col) != "N/A" else 0), item) for item in self.tree.get_children('')]
             else:
                 data = [(self.tree.set(item, col).lower(), item) for item in self.tree.get_children('')]
         except Exception as e:
             print(f"Sort error: {e}")
             return
 
+        # Sort data and update Treeview
         data.sort(reverse=reverse)
-
         for index, (val, item) in enumerate(data):
             self.tree.move(item, '', index)
 
+        # Update column heading to toggle sort order
         self.tree.heading(col, command=lambda: self.sort_column(col, not reverse))
 
     # Helper to get the GameID and Title of the selected item.
@@ -908,6 +927,28 @@ class SearchFrame(ttk.Frame):
         game_id = item_data['values'][0]
         game_title = item_data['values'][1]
         return game_id, game_title
+    
+    def apply_sort(self):
+    # Get the currently selected sorting option from the dropdown
+        sort_option = self.sort_var.get()
+
+        # Map dropdown options to Treeview column names and sort directions
+        col_map = {
+            "Title ASC": ("Title", False),
+            "Title DESC": ("Title", True),
+            "Price ASC": ("Price", False),
+            "Price DESC": ("Price", True),
+            "Genre ASC": ("Genre", False),
+            "Genre DESC": ("Genre", True),
+            "Year ASC": ("Year", False),
+            "Year DESC": ("Year", True),
+        }
+
+        # Get the corresponding column and reverse flag
+        col, reverse = col_map.get(sort_option, ("Title", False))
+
+        # Call the sort_column method to sort the Treeview
+        self.sort_column(col, reverse)
 
     # Adds the selected game to a user-chosen collection.
     def add_to_collection(self):
