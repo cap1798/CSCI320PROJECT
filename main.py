@@ -719,13 +719,29 @@ class SearchFrame(ttk.Frame):
         results_frame = ttk.Frame(self)
         results_frame.pack(fill="both", expand=True, pady=(10, 0))
 
-        cols = (
-        "Title", "Year", "Price", "Platforms", "Developers", "Publisher", "My Playtime", "Age Rating", "My Rating")
-        self.tree = ttk.Treeview(results_frame, columns=cols, show="headings")
+        # Define all columns including hidden ones
+        all_cols = ("GameID", "Title", "Year", "Price", "Platforms", "Developers", "Publisher",
+                    "My PlaytimeNum", "My Playtime", "Age Rating", "My RatingNum", "My Rating", "Genres")
+        
+        self.tree = ttk.Treeview(results_frame, columns=all_cols, show="headings")
+        
+        # Set up visible columns
+        visible_cols = ("Title", "Year", "Price", "Platforms", "Developers", "Publisher", 
+                        "My Playtime", "Age Rating", "My Rating")
+        
+        self.tree['displaycolumns'] = visible_cols
 
-        for col in cols:
+        # Hide the non-display columns
+        self.tree.column("GameID", width=0, stretch=tk.NO)
+        self.tree.column("My PlaytimeNum", width=0, stretch=tk.NO)
+        self.tree.column("My RatingNum", width=0, stretch=tk.NO)
+        self.tree.column("Genres", width=0, stretch=tk.NO)
+
+        # Set up headings for visible columns with sort commands
+        for col in visible_cols:
             self.tree.heading(col, text=col, command=lambda _col=col: self.sort_column(_col, False))
 
+        # Set column widths for visible columns
         self.tree.column("Title", width=200)
         self.tree.column("Year", width=50, anchor="center")
         self.tree.column("Price", width=50, anchor="center")
@@ -741,14 +757,6 @@ class SearchFrame(ttk.Frame):
 
         scrollbar.pack(side="right", fill="y")
         self.tree.pack(side="left", fill="both", expand=True)
-
-        self.tree['displaycolumns'] = cols
-        self.tree["columns"] = ("GameID", "Title", "Year", "Price", "Platforms", "Developers", "Publisher",
-                                "My PlaytimeNum", "My Playtime", "Age Rating", "My RatingNum", "My Rating")
-
-        self.tree.column("GameID", width=0, stretch=tk.NO)
-        self.tree.column("My PlaytimeNum", width=0, stretch=tk.NO)
-        self.tree.column("My RatingNum", width=0, stretch=tk.NO)
 
         action_frame = ttk.Frame(self)
         action_frame.pack(side="bottom", fill="x", pady=(10, 0))
@@ -782,6 +790,7 @@ class SearchFrame(ttk.Frame):
         for item in self.tree.get_children():
             self.tree.delete(item)
         self.search_results_data = []
+        
 
         try:
             # CORRECTED: All tables, columns, and aliases to lowercase
@@ -793,6 +802,7 @@ class SearchFrame(ttk.Frame):
                     STRING_AGG(DISTINCT p.name, ', ') AS platforms,
                     STRING_AGG(DISTINCT dev.name, ', ') AS developers,
                     STRING_AGG(DISTINCT pub.name, ', ') AS publishers,
+                    STRING_AGG(DISTINCT gen.name, ', ') AS genres,
                     COALESCE(SUM(pl.duration), 0) AS totalplaytime,
                     pu.starrating,
                     MIN(EXTRACT(YEAR FROM gp.releasedate)) AS releaseyear,
@@ -865,7 +875,8 @@ class SearchFrame(ttk.Frame):
             self.controller.curs.execute(base_sql, params)
 
             for row in self.controller.curs.fetchall():
-                (game_id, title, esrb, platforms, devs, pubs,
+                # Unpack in the correct order matching the SQL SELECT
+                (game_id, title, esrb, platforms, devs, pubs, genres,
                  playtime_num, rating_num, year, price, _) = row
 
                 playtime_str = format_duration(playtime_num)
@@ -877,7 +888,7 @@ class SearchFrame(ttk.Frame):
 
                 self.tree.insert("", "end", values=(
                     game_id, title, year_str, price_str, platforms, devs, pubs,
-                    playtime_num, playtime_str, esrb, rating_num, rating_str
+                    playtime_num, playtime_str, esrb, rating_num, rating_str, genres
                 ))
 
         except Exception as e:
@@ -902,13 +913,15 @@ class SearchFrame(ttk.Frame):
                 data = [(float(self.tree.set(item, "My RatingNum") or -1), item) for item in self.tree.get_children('')]
             elif col == "Year":
                 data = [(float(self.tree.set(item, col) if self.tree.set(item, col) != "N/A" else 0), item) for item in self.tree.get_children('')]
+            elif col == "Genres":  # Sorting logic for Genres (hidden column)
+                data = [(self.tree.set(item, col).lower() if self.tree.set(item, col) else "", item) for item in self.tree.get_children('')]
             else:
                 data = [(self.tree.set(item, col).lower(), item) for item in self.tree.get_children('')]
         except Exception as e:
             print(f"Sort error: {e}")
             return
 
-        # Sort data and update Treeview
+        # Sort data and update TreeView
         data.sort(reverse=reverse)
         for index, (val, item) in enumerate(data):
             self.tree.move(item, '', index)
@@ -929,7 +942,7 @@ class SearchFrame(ttk.Frame):
         return game_id, game_title
     
     def apply_sort(self):
-    # Get the currently selected sorting option from the dropdown
+        # Get the currently selected sorting option from the dropdown
         sort_option = self.sort_var.get()
 
         # Map dropdown options to Treeview column names and sort directions
@@ -938,8 +951,8 @@ class SearchFrame(ttk.Frame):
             "Title DESC": ("Title", True),
             "Price ASC": ("Price", False),
             "Price DESC": ("Price", True),
-            "Genre ASC": ("Genre", False),
-            "Genre DESC": ("Genre", True),
+            "Genre ASC": ("Genres", False),
+            "Genre DESC": ("Genres", True),
             "Year ASC": ("Year", False),
             "Year DESC": ("Year", True),
         }
