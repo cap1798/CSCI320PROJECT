@@ -118,7 +118,6 @@ class App(tk.Tk):
             messagebox.showerror("Connection Failed", f"Could not connect to database:\n{e}")
             return False
 
-    # SENIOR ENGINEER ADDITION: Method to apply indexes
     def optimize_database(self):
         try:
             print("Applying performance indexes...")
