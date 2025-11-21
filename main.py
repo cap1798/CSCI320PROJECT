@@ -109,10 +109,56 @@ class App(tk.Tk):
             self.conn = psycopg.connect(**params)
             self.curs = self.conn.cursor()
             print("Database connection established")
+
+            # OPTIMIZATION: Apply indexes immediately after connection
+            self.optimize_database()
+
             return True
         except Exception as e:
             messagebox.showerror("Connection Failed", f"Could not connect to database:\n{e}")
             return False
+
+    # SENIOR ENGINEER ADDITION: Method to apply indexes
+    def optimize_database(self):
+        try:
+            print("Applying performance indexes...")
+            indexes = [
+                # Speed up Login and Registration
+                "CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)",
+                "CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)",
+
+                # Speed up Collection Loading (Filtering by User)
+                "CREATE INDEX IF NOT EXISTS idx_collection_userid ON collection(userid)",
+
+                # Speed up Joins for Collections and Plays
+                "CREATE INDEX IF NOT EXISTS idx_plays_userid_gameid ON plays(userid, gameid)",
+                "CREATE INDEX IF NOT EXISTS idx_collectiongame_col_game ON collectiongame(collectionid, gameid)",
+
+                # Speed up 'Popular in Last 90 Days' (Time filtering)
+                "CREATE INDEX IF NOT EXISTS idx_plays_date ON plays(playdatetime)",
+
+                # Speed up Search Joins (Foreign Keys are not indexed by default in PG)
+                "CREATE INDEX IF NOT EXISTS idx_gameplatform_gameid ON gameplatform(gameid)",
+                "CREATE INDEX IF NOT EXISTS idx_gamedeveloper_gameid ON gamedeveloper(gameid)",
+                "CREATE INDEX IF NOT EXISTS idx_gamepublisher_gameid ON gamepublisher(gameid)",
+                "CREATE INDEX IF NOT EXISTS idx_gamegenre_gameid ON gamegenre(gameid)",
+
+                # Speed up Social Features
+                "CREATE INDEX IF NOT EXISTS idx_follows_follower ON follows(followerid)",
+                "CREATE INDEX IF NOT EXISTS idx_follows_followed ON follows(followedid)",
+
+                # Speed up New Releases (Date Sorting/Filtering)
+                "CREATE INDEX IF NOT EXISTS idx_gameplatform_release ON gameplatform(releasedate)"
+            ]
+
+            for idx_sql in indexes:
+                self.curs.execute(idx_sql)
+            self.conn.commit()
+            print("Indexes applied successfully.")
+
+        except Exception as e:
+            print(f"Index optimization warning: {e}")
+            self.conn.rollback()
 
     # Raises the specified frame to the top.
     def show_frame(self, page_name):
@@ -165,7 +211,6 @@ class LoginFrame(tk.Frame):
             return
 
         try:
-            # CORRECTED: "User", "UserID", "Password", "Username" -> users, userid, password, username
             self.controller.curs.execute(
                 'SELECT userid, password FROM users WHERE username = %s',
                 (username,)
@@ -176,7 +221,6 @@ class LoginFrame(tk.Frame):
                 user_id, stored_password = user_data
 
                 if check_password(stored_password, password):
-                    # CORRECTED: "User", "LastAccessDate", "UserID" -> users, lastaccessdate, userid
                     self.controller.curs.execute(
                         'UPDATE users SET lastaccessdate = %s WHERE userid = %s',
                         (datetime.datetime.now(), user_id)
@@ -284,13 +328,15 @@ class RegisterFrame(tk.Frame):
             )
             self.controller.conn.commit()
             messagebox.showinfo("Success", "Account created successfully! Please log in.")
-            for entry in [self.fname_entry, self.lname_entry, self.email_entry, self.username_entry, self.password_entry]:
+            for entry in [self.fname_entry, self.lname_entry, self.email_entry, self.username_entry,
+                          self.password_entry]:
                 entry.delete(0, 'end')
             self.controller.show_frame("LoginFrame")
 
         except psycopg.Error as e:
             self.controller.conn.rollback()
             messagebox.showerror("Database Error", f"An unexpected error occurred: {e}")
+
 
 # The main application frame, containing the tabbed interface.
 class MainAppFrame(tk.Frame):
@@ -315,12 +361,31 @@ class MainAppFrame(tk.Frame):
         self.collections_frame = CollectionsFrame(self.notebook, self.controller)
         self.search_frame = SearchFrame(self.notebook, self.controller)
         self.social_frame = SocialFrame(self.notebook, self.controller)
+        self.profile_frame = ProfileFrame(self.notebook, self.controller)
+        self.popular_frame = PopularFrame(self.notebook, self.controller)
 
         self.notebook.add(self.collections_frame, text="My Collections")
         self.notebook.add(self.search_frame, text="Search Games")
         self.notebook.add(self.social_frame, text="Social")
+        self.notebook.add(self.profile_frame, text="My Profile")
+        self.notebook.add(self.popular_frame, text="Popular & Recommended")
 
         self.notebook.pack(expand=True, fill="both", padx=10, pady=10)
+
+        # Bind tab selection event to refresh data
+        self.notebook.bind("<<NotebookTabChanged>>", self.on_tab_changed)
+
+    # Handles tab changes to refresh data.
+    def on_tab_changed(self, event):
+        selected_tab = event.widget.select()
+        tab_text = event.widget.tab(selected_tab, "text")
+
+        if tab_text == "My Profile":
+            self.profile_frame.load_profile()
+        elif tab_text == "Popular & Recommended":
+            self.popular_frame.load_data()
+        elif tab_text == "Social":
+            self.social_frame.load_following()
 
     # Handles user logout.
     def logout(self):
@@ -332,7 +397,6 @@ class MainAppFrame(tk.Frame):
     def refresh_data(self):
         if self.controller.current_user_id:
             try:
-                # CORRECTED: "FirstName", "User", "UserID" -> firstname, users, userid
                 self.controller.curs.execute(
                     'SELECT firstname FROM users WHERE userid = %s',
                     (self.controller.current_user_id,)
@@ -345,6 +409,8 @@ class MainAppFrame(tk.Frame):
 
             self.collections_frame.load_collections()
             self.social_frame.load_following()
+            self.profile_frame.load_profile()
+            self.popular_frame.load_data()
 
 
 # The frame for the "My Collections" tab.
@@ -406,7 +472,6 @@ class CollectionsFrame(ttk.Frame):
             return
 
         try:
-            # CORRECTED: All tables and columns to lowercase
             sql = """
                 SELECT 
                     c.collectionid,
@@ -457,6 +522,9 @@ class CollectionsFrame(ttk.Frame):
 
             self.new_collection_entry.delete(0, 'end')
             self.load_collections()
+            # Refresh profile if it exists
+            if hasattr(self.controller.frames["MainAppFrame"], 'profile_frame'):
+                self.controller.frames["MainAppFrame"].profile_frame.load_profile()
 
         except psycopg.Error as e:
             self.controller.conn.rollback()
@@ -491,7 +559,6 @@ class CollectionsFrame(ttk.Frame):
             return
 
         try:
-            # CORRECTED: "Collection", "Name", "CollectionID", "UserID" -> collection, name, collectionid, userid
             sql = 'UPDATE collection SET name = %s WHERE collectionid = %s AND userid = %s'
             self.controller.curs.execute(sql, (new_name, collection_id, self.controller.current_user_id))
             self.controller.conn.commit()
@@ -516,16 +583,17 @@ class CollectionsFrame(ttk.Frame):
             return
 
         try:
-            # CORRECTED: "CollectionGame", "CollectionID" -> collectiongame, collectionid
             sql_games = 'DELETE FROM collectiongame WHERE collectionid = %s'
             self.controller.curs.execute(sql_games, (collection_id,))
 
-            # CORRECTED: "Collection", "CollectionID", "UserID" -> collection, collectionid, userid
             sql_coll = 'DELETE FROM collection WHERE collectionid = %s AND userid = %s'
             self.controller.curs.execute(sql_coll, (collection_id, self.controller.current_user_id))
 
             self.controller.conn.commit()
             self.load_collections()
+            # Refresh profile if it exists
+            if hasattr(self.controller.frames["MainAppFrame"], 'profile_frame'):
+                self.controller.frames["MainAppFrame"].profile_frame.load_profile()
 
         except Exception as e:
             self.controller.conn.rollback()
@@ -538,26 +606,25 @@ class CollectionsFrame(ttk.Frame):
             return
 
         try:
-            # CORRECTED: "GameID", "CollectionGame", "CollectionID" -> gameid, collectiongame, collectionid
+            # Fetch all games from the collection
             sql = """
                 SELECT gameid FROM collectiongame 
-                WHERE collectionid = %s 
-                ORDER BY random() LIMIT 1
+                WHERE collectionid = %s
             """
             self.controller.curs.execute(sql, (collection_id,))
-            result = self.controller.curs.fetchone()
+            games = self.controller.curs.fetchall()
 
-            if not result:
+            if not games:
                 messagebox.showinfo("Empty Collection", f"The collection '{collection_name}' has no games in it.")
                 return
 
-            game_id = result[0]
+            # Use Python's random to select a game
+            game_id = random.choice(games)[0]
 
             duration = simpledialog.askinteger("Log Play Session", "How many minutes did you play?", minvalue=1)
             if not duration:
                 return
 
-            # CORRECTED: "Plays" and all columns to lowercase
             sql_play = """
                 INSERT INTO plays (userid, gameid, playdatetime, duration)
                 VALUES (%s, %s, %s, %s)
@@ -626,8 +693,6 @@ class CollectionDetailWindow(tk.Toplevel):
             self.tree.delete(item)
 
         try:
-            # CORRECTED: "GameID", "Title", "ESRB Rating", "VideoGame", "CollectionGame", "CollectionID"
-            # -> gameid, title, esrb_rating, videogame, collectiongame, collectionid
             sql = """
                 SELECT g.gameid, g.title, g.esrb_rating
                 FROM videogame g
@@ -657,7 +722,6 @@ class CollectionDetailWindow(tk.Toplevel):
             return
 
         try:
-            # CORRECTED: "CollectionGame", "CollectionID", "GameID" -> collectiongame, collectionid, gameid
             sql = 'DELETE FROM collectiongame WHERE collectionid = %s AND gameid = %s'
             self.controller.curs.execute(sql, (self.collection_id, game_id))
             self.controller.conn.commit()
@@ -720,13 +784,29 @@ class SearchFrame(ttk.Frame):
         results_frame = ttk.Frame(self)
         results_frame.pack(fill="both", expand=True, pady=(10, 0))
 
-        cols = (
-        "Title", "Year", "Price", "Platforms", "Developers", "Publisher", "My Playtime", "Age Rating", "My Rating")
-        self.tree = ttk.Treeview(results_frame, columns=cols, show="headings")
+        # Define all columns including hidden ones
+        all_cols = ("GameID", "Title", "Year", "Price", "Platforms", "Developers", "Publisher",
+                    "My PlaytimeNum", "My Playtime", "Age Rating", "My RatingNum", "My Rating", "Genres")
 
-        for col in cols:
+        self.tree = ttk.Treeview(results_frame, columns=all_cols, show="headings")
+
+        # Set up visible columns
+        visible_cols = ("Title", "Year", "Price", "Platforms", "Developers", "Publisher",
+                        "My Playtime", "Age Rating", "My Rating")
+
+        self.tree['displaycolumns'] = visible_cols
+
+        # Hide the non-display columns
+        self.tree.column("GameID", width=0, stretch=tk.NO)
+        self.tree.column("My PlaytimeNum", width=0, stretch=tk.NO)
+        self.tree.column("My RatingNum", width=0, stretch=tk.NO)
+        self.tree.column("Genres", width=0, stretch=tk.NO)
+
+        # Set up headings for visible columns with sort commands
+        for col in visible_cols:
             self.tree.heading(col, text=col, command=lambda _col=col: self.sort_column(_col, False))
 
+        # Set column widths for visible columns
         self.tree.column("Title", width=200)
         self.tree.column("Year", width=50, anchor="center")
         self.tree.column("Price", width=50, anchor="center")
@@ -743,16 +823,27 @@ class SearchFrame(ttk.Frame):
         scrollbar.pack(side="right", fill="y")
         self.tree.pack(side="left", fill="both", expand=True)
 
-        self.tree['displaycolumns'] = cols
-        self.tree["columns"] = ("GameID", "Title", "Year", "Price", "Platforms", "Developers", "Publisher",
-                                "My PlaytimeNum", "My Playtime", "Age Rating", "My RatingNum", "My Rating")
-
-        self.tree.column("GameID", width=0, stretch=tk.NO)
-        self.tree.column("My PlaytimeNum", width=0, stretch=tk.NO)
-        self.tree.column("My RatingNum", width=0, stretch=tk.NO)
-
         action_frame = ttk.Frame(self)
         action_frame.pack(side="bottom", fill="x", pady=(10, 0))
+
+        # Add dropdown or buttons for sorting options
+        sort_frame = ttk.Frame(self)
+        sort_frame.pack(side="top", fill="x", pady=(5, 10))
+
+        # Dropdown for sorting options
+        sort_label = ttk.Label(sort_frame, text="Sort by:")
+        sort_label.pack(side="left", padx=5)
+
+        self.sort_var = tk.StringVar(value="Title ASC")
+        sort_dropdown = ttk.OptionMenu(
+            sort_frame, self.sort_var,
+            "Title ASC", "Title DESC", "Price ASC", "Price DESC",
+            "Genre ASC", "Genre DESC", "Year ASC", "Year DESC"
+        )
+        sort_dropdown.pack(side="left", padx=5)
+        # Apply sorting button
+        sort_button = ttk.Button(sort_frame, text="Apply Sort", command=self.apply_sort)
+        sort_button.pack(side="left", padx=5)
 
         ttk.Button(action_frame, text="Add Selected to Collection...", command=self.add_to_collection).pack(side="left",
                                                                                                             padx=2)
@@ -766,7 +857,6 @@ class SearchFrame(ttk.Frame):
         self.search_results_data = []
 
         try:
-            # CORRECTED: All tables, columns, and aliases to lowercase
             base_sql = """
                 SELECT 
                     g.gameid, 
@@ -775,6 +865,7 @@ class SearchFrame(ttk.Frame):
                     STRING_AGG(DISTINCT p.name, ', ') AS platforms,
                     STRING_AGG(DISTINCT dev.name, ', ') AS developers,
                     STRING_AGG(DISTINCT pub.name, ', ') AS publishers,
+                    STRING_AGG(DISTINCT gen.name, ', ') AS genres,
                     COALESCE(SUM(pl.duration), 0) AS totalplaytime,
                     pu.starrating,
                     MIN(EXTRACT(YEAR FROM gp.releasedate)) AS releaseyear,
@@ -798,7 +889,6 @@ class SearchFrame(ttk.Frame):
             where_clauses = []
             params = [self.controller.current_user_id, self.controller.current_user_id]
 
-            # CORRECTED: All query columns to lowercase
             if self.title_entry.get():
                 where_clauses.append('g.title ILIKE %s')
                 params.append(f"%{self.title_entry.get()}%")
@@ -838,7 +928,6 @@ class SearchFrame(ttk.Frame):
             if where_clauses:
                 base_sql += " AND " + " AND ".join(where_clauses)
 
-            # CORRECTED: GROUP BY columns and ORDER BY alias
             base_sql += """
                 GROUP BY g.gameid, g.title, g.esrb_rating, pu.starrating
                 ORDER BY g.title ASC, minreleasedate ASC;
@@ -847,7 +936,8 @@ class SearchFrame(ttk.Frame):
             self.controller.curs.execute(base_sql, params)
 
             for row in self.controller.curs.fetchall():
-                (game_id, title, esrb, platforms, devs, pubs,
+                # Unpack in the correct order matching the SQL SELECT
+                (game_id, title, esrb, platforms, devs, pubs, genres,
                  playtime_num, rating_num, year, price, _) = row
 
                 playtime_str = format_duration(playtime_num)
@@ -859,7 +949,7 @@ class SearchFrame(ttk.Frame):
 
                 self.tree.insert("", "end", values=(
                     game_id, title, year_str, price_str, platforms, devs, pubs,
-                    playtime_num, playtime_str, esrb, rating_num, rating_str
+                    playtime_num, playtime_str, esrb, rating_num, rating_str, genres
                 ))
 
         except Exception as e:
@@ -869,32 +959,37 @@ class SearchFrame(ttk.Frame):
     # Sorts the treeview by a column without re-querying.
     def sort_column(self, col, reverse):
         try:
-            if col == "My Playtime":
+            if col == "Price":
+                data = []
+                for item in self.tree.get_children(''):
+                    price_val = self.tree.set(item, col)
+                    if price_val == "N/A":  # Handle missing values
+                        data.append((-1.0, item))
+                    else:
+                        price_val = price_val.replace("$", "")  # Remove dollar sign
+                        data.append((float(price_val), item))  # Convert to float
+            elif col == "My Playtime":
                 data = [(float(self.tree.set(item, "My PlaytimeNum")), item) for item in self.tree.get_children('')]
             elif col == "My Rating":
                 data = [(float(self.tree.set(item, "My RatingNum") or -1), item) for item in self.tree.get_children('')]
             elif col == "Year":
                 data = [(float(self.tree.set(item, col) if self.tree.set(item, col) != "N/A" else 0), item) for item in
                         self.tree.get_children('')]
-            elif col == "Price":
-                data = []
-                for item in self.tree.get_children(''):
-                    price_val = self.tree.set(item, col)
-                    if price_val == "N/A":
-                        data.append((-1.0, item))
-                    else:
-                        data.append((float(price_val.replace("$", "")), item))
+            elif col == "Genres":  # Sorting logic for Genres (hidden column)
+                data = [(self.tree.set(item, col).lower() if self.tree.set(item, col) else "", item) for item in
+                        self.tree.get_children('')]
             else:
                 data = [(self.tree.set(item, col).lower(), item) for item in self.tree.get_children('')]
         except Exception as e:
             print(f"Sort error: {e}")
             return
 
+        # Sort data and update TreeView
         data.sort(reverse=reverse)
-
         for index, (val, item) in enumerate(data):
             self.tree.move(item, '', index)
 
+        # Update column heading to toggle sort order
         self.tree.heading(col, command=lambda: self.sort_column(col, not reverse))
 
     # Helper to get the GameID and Title of the selected item.
@@ -909,6 +1004,28 @@ class SearchFrame(ttk.Frame):
         game_title = item_data['values'][1]
         return game_id, game_title
 
+    def apply_sort(self):
+        # Get the currently selected sorting option from the dropdown
+        sort_option = self.sort_var.get()
+
+        # Map dropdown options to Treeview column names and sort directions
+        col_map = {
+            "Title ASC": ("Title", False),
+            "Title DESC": ("Title", True),
+            "Price ASC": ("Price", False),
+            "Price DESC": ("Price", True),
+            "Genre ASC": ("Genres", False),
+            "Genre DESC": ("Genres", True),
+            "Year ASC": ("Year", False),
+            "Year DESC": ("Year", True),
+        }
+
+        # Get the corresponding column and reverse flag
+        col, reverse = col_map.get(sort_option, ("Title", False))
+
+        # Call the sort_column method to sort the Treeview
+        self.sort_column(col, reverse)
+
     # Adds the selected game to a user-chosen collection.
     def add_to_collection(self):
         game_id, game_title = self.get_selected_game()
@@ -916,14 +1033,12 @@ class SearchFrame(ttk.Frame):
             return
 
         try:
-            # CORRECTED: "PlatformID", "UserPlatform", "UserID" -> platformid, userplatform, userid
             self.controller.curs.execute(
                 'SELECT platformid FROM userplatform WHERE userid = %s',
                 (self.controller.current_user_id,)
             )
             user_platforms = {row[0] for row in self.controller.curs.fetchall()}
 
-            # CORRECTED: "PlatformID", "GamePlatform", "GameID" -> platformid, gameplatform, gameid
             self.controller.curs.execute(
                 'SELECT platformid FROM gameplatform WHERE gameid = %s',
                 (game_id,)
@@ -942,8 +1057,6 @@ class SearchFrame(ttk.Frame):
             return
 
         try:
-            # CORRECTED: "CollectionID", "Name", "Collection", "UserID", "Name" ->
-            # collectionid, name, collection, userid, name
             self.controller.curs.execute(
                 'SELECT collectionid, name FROM collection WHERE userid = %s ORDER BY name',
                 (self.controller.current_user_id,)
@@ -961,7 +1074,6 @@ class SearchFrame(ttk.Frame):
             if choice:
                 chosen_collection_id = [cid for cid, name in collections if name == choice][0]
 
-                # CORRECTED: "CollectionGame", "CollectionID", "GameID" -> collectiongame, collectionid, gameid
                 self.controller.curs.execute(
                     'INSERT INTO collectiongame (collectionid, gameid) VALUES (%s, %s)',
                     (chosen_collection_id, game_id)
@@ -1024,7 +1136,6 @@ class SearchFrame(ttk.Frame):
             return
 
         try:
-            # CORRECTED: All tables and columns to lowercase
             sql = """
                 INSERT INTO purchases (userid, gameid, starrating)
                 VALUES (%s, %s, %s)
@@ -1036,6 +1147,9 @@ class SearchFrame(ttk.Frame):
             messagebox.showinfo("Success", f"Set rating for '{game_title}' to {rating} stars.")
 
             self.search_games()
+            # Refresh profile if it exists
+            if hasattr(self.controller.frames["MainAppFrame"], 'profile_frame'):
+                self.controller.frames["MainAppFrame"].profile_frame.load_profile()
 
         except Exception as e:
             self.controller.conn.rollback()
@@ -1053,7 +1167,6 @@ class SearchFrame(ttk.Frame):
             return
 
         try:
-            # CORRECTED: "Plays" and all columns to lowercase
             sql = """
                 INSERT INTO plays (userid, gameid, playdatetime, duration)
                 VALUES (%s, %s, %s, %s)
@@ -1066,6 +1179,9 @@ class SearchFrame(ttk.Frame):
 
             self.search_games()
             self.controller.frames["MainAppFrame"].collections_frame.load_collections()
+            # Refresh profile if it exists
+            if hasattr(self.controller.frames["MainAppFrame"], 'profile_frame'):
+                self.controller.frames["MainAppFrame"].profile_frame.load_profile()
 
         except Exception as e:
             self.controller.conn.rollback()
@@ -1139,7 +1255,6 @@ class SocialFrame(ttk.Frame):
             return
 
         try:
-            # CORRECTED: "UserID", "Username", "Email", "User" -> userid, username, email, users
             sql = """
                 SELECT userid, username, email 
                 FROM users 
@@ -1163,7 +1278,6 @@ class SocialFrame(ttk.Frame):
             return
 
         try:
-            # CORRECTED: All tables and columns to lowercase
             sql = """
                 SELECT u.userid, u.username, u.email, f.followdate
                 FROM follows f
@@ -1192,7 +1306,6 @@ class SocialFrame(ttk.Frame):
         user_id, username, _ = self.search_tree.item(selected_item)['values']
 
         try:
-            # CORRECTED: "Follows", "FollowerID", "FollowedID", "FollowDate" -> follows, followerid, followedid, followdate
             sql = """
                 INSERT INTO follows (followerid, followedid, followdate)
                 VALUES (%s, %s, %s)
@@ -1202,6 +1315,9 @@ class SocialFrame(ttk.Frame):
 
             messagebox.showinfo("Success", f"You are now following {username}.")
             self.load_following()
+            # Refresh profile if it exists
+            if hasattr(self.controller.frames["MainAppFrame"], 'profile_frame'):
+                self.controller.frames["MainAppFrame"].profile_frame.load_profile()
 
         except psycopg.Error as e:
             self.controller.conn.rollback()
@@ -1223,7 +1339,6 @@ class SocialFrame(ttk.Frame):
             return
 
         try:
-            # CORRECTED: "Follows", "FollowerID", "FollowedID" -> follows, followerid, followedid
             sql = """
                 DELETE FROM follows 
                 WHERE followerid = %s AND followedid = %s
@@ -1233,10 +1348,503 @@ class SocialFrame(ttk.Frame):
 
             messagebox.showinfo("Success", f"You have unfollowed {username}.")
             self.load_following()
+            # Refresh profile if it exists
+            if hasattr(self.controller.frames["MainAppFrame"], 'profile_frame'):
+                self.controller.frames["MainAppFrame"].profile_frame.load_profile()
 
         except Exception as e:
             self.controller.conn.rollback()
             messagebox.showerror("Database Error", f"Failed to unfollow user: {e}")
+
+
+# The frame for the "My Profile" tab.
+class ProfileFrame(ttk.Frame):
+    # Initializes the profile UI.
+    def __init__(self, parent, controller):
+        ttk.Frame.__init__(self, parent, padding="10")
+        self.controller = controller
+
+        # Main container with scrollbar
+        main_container = ttk.Frame(self)
+        main_container.pack(fill="both", expand=True)
+
+        # Stats section
+        stats_frame = ttk.LabelFrame(main_container, text="Profile Statistics", padding="15")
+        stats_frame.pack(fill="x", pady=(0, 10))
+
+        self.collections_label = ttk.Label(stats_frame, text="Collections: 0", font=("Arial", 12))
+        self.collections_label.grid(row=0, column=0, padx=20, pady=5, sticky="w")
+
+        self.followers_label = ttk.Label(stats_frame, text="Followers: 0", font=("Arial", 12))
+        self.followers_label.grid(row=0, column=1, padx=20, pady=5, sticky="w")
+
+        self.following_label = ttk.Label(stats_frame, text="Following: 0", font=("Arial", 12))
+        self.following_label.grid(row=0, column=2, padx=20, pady=5, sticky="w")
+
+        # Top 10 Games section
+        top_games_frame = ttk.LabelFrame(main_container, text="Top 10 Games", padding="15")
+        top_games_frame.pack(fill="both", expand=True, pady=(0, 10))
+
+        # Sort options
+        sort_bar = ttk.Frame(top_games_frame)
+        sort_bar.pack(fill="x", pady=(0, 10))
+
+        ttk.Label(sort_bar, text="Sort by:").pack(side="left", padx=5)
+        self.sort_var = tk.StringVar(value="rating")
+        ttk.Radiobutton(sort_bar, text="Rating", variable=self.sort_var, value="rating",
+                        command=self.load_top_games).pack(side="left", padx=5)
+        ttk.Radiobutton(sort_bar, text="Playtime", variable=self.sort_var, value="playtime",
+                        command=self.load_top_games).pack(side="left", padx=5)
+        ttk.Radiobutton(sort_bar, text="Combined (Rating × Playtime)", variable=self.sort_var, value="combined",
+                        command=self.load_top_games).pack(side="left", padx=5)
+
+        # Top games tree
+        cols = ("Rank", "Title", "Rating", "Playtime", "Score")
+        self.top_games_tree = ttk.Treeview(top_games_frame, columns=cols, show="headings", height=10)
+        self.top_games_tree.heading("Rank", text="#")
+        self.top_games_tree.heading("Title", text="Game Title")
+        self.top_games_tree.heading("Rating", text="My Rating")
+        self.top_games_tree.heading("Playtime", text="Playtime")
+        self.top_games_tree.heading("Score", text="Score")
+
+        self.top_games_tree.column("Rank", width=40, anchor="center")
+        self.top_games_tree.column("Title", width=300)
+        self.top_games_tree.column("Rating", width=80, anchor="center")
+        self.top_games_tree.column("Playtime", width=100, anchor="center")
+        self.top_games_tree.column("Score", width=100, anchor="center")
+
+        scrollbar = ttk.Scrollbar(top_games_frame, orient="vertical", command=self.top_games_tree.yview)
+        self.top_games_tree.configure(yscrollcommand=scrollbar.set)
+
+        scrollbar.pack(side="right", fill="y")
+        self.top_games_tree.pack(side="left", fill="both", expand=True)
+
+    # Loads profile statistics.
+    def load_profile(self):
+        if not self.controller.current_user_id:
+            return
+
+        try:
+            # Count collections
+            self.controller.curs.execute(
+                'SELECT COUNT(*) FROM collection WHERE userid = %s',
+                (self.controller.current_user_id,)
+            )
+            collections_count = self.controller.curs.fetchone()[0]
+            self.collections_label.config(text=f"Collections: {collections_count}")
+
+            # Count followers
+            self.controller.curs.execute(
+                'SELECT COUNT(*) FROM follows WHERE followedid = %s',
+                (self.controller.current_user_id,)
+            )
+            followers_count = self.controller.curs.fetchone()[0]
+            self.followers_label.config(text=f"Followers: {followers_count}")
+
+            # Count following
+            self.controller.curs.execute(
+                'SELECT COUNT(*) FROM follows WHERE followerid = %s',
+                (self.controller.current_user_id,)
+            )
+            following_count = self.controller.curs.fetchone()[0]
+            self.following_label.config(text=f"Following: {following_count}")
+
+            self.load_top_games()
+
+        except Exception as e:
+            messagebox.showerror("Database Error", f"Failed to load profile: {e}")
+            self.controller.conn.rollback()
+
+    # Loads top 10 games based on selected criteria.
+    def load_top_games(self):
+        for item in self.top_games_tree.get_children():
+            self.top_games_tree.delete(item)
+
+        if not self.controller.current_user_id:
+            return
+
+        sort_method = self.sort_var.get()
+
+        try:
+            if sort_method == "rating":
+                sql = """
+                    SELECT g.title, pu.starrating, COALESCE(SUM(pl.duration), 0) as totalplaytime
+                    FROM purchases pu
+                    JOIN videogame g ON pu.gameid = g.gameid
+                    LEFT JOIN plays pl ON pu.gameid = pl.gameid AND pl.userid = pu.userid
+                    WHERE pu.userid = %s AND pu.starrating IS NOT NULL
+                    GROUP BY g.title, pu.starrating
+                    ORDER BY pu.starrating DESC, totalplaytime DESC
+                    LIMIT 10
+                """
+            elif sort_method == "playtime":
+                sql = """
+                    SELECT g.title, pu.starrating, COALESCE(SUM(pl.duration), 0) as totalplaytime
+                    FROM plays pl
+                    JOIN videogame g ON pl.gameid = g.gameid
+                    LEFT JOIN purchases pu ON pl.gameid = pu.gameid AND pl.userid = pu.userid
+                    WHERE pl.userid = %s
+                    GROUP BY g.title, pu.starrating
+                    ORDER BY totalplaytime DESC
+                    LIMIT 10
+                """
+            else:  # combined
+                sql = """
+                    SELECT g.title, pu.starrating, COALESCE(SUM(pl.duration), 0) as totalplaytime,
+                           (COALESCE(pu.starrating, 0) * COALESCE(SUM(pl.duration), 0)) as score
+                    FROM videogame g
+                    LEFT JOIN purchases pu ON g.gameid = pu.gameid AND pu.userid = %s
+                    LEFT JOIN plays pl ON g.gameid = pl.gameid AND pl.userid = %s
+                    WHERE (pu.userid = %s OR pl.userid = %s)
+                    GROUP BY g.title, pu.starrating
+                    HAVING (pu.starrating IS NOT NULL OR SUM(pl.duration) > 0)
+                    ORDER BY score DESC
+                    LIMIT 10
+                """
+                params = (self.controller.current_user_id,) * 4
+
+            if sort_method != "combined":
+                params = (self.controller.current_user_id,)
+
+            self.controller.curs.execute(sql, params)
+
+            for idx, row in enumerate(self.controller.curs.fetchall(), 1):
+                if sort_method == "combined":
+                    title, rating, playtime, score = row
+                    score_str = f"{score:.0f}"
+                else:
+                    title, rating, playtime = row
+                    score_str = "N/A"
+
+                rating_str = f"{rating} ★" if rating else "N/A"
+                playtime_str = format_duration(playtime)
+
+                self.top_games_tree.insert("", "end", values=(
+                    idx, title, rating_str, playtime_str, score_str
+                ))
+
+        except Exception as e:
+            messagebox.showerror("Database Error", f"Failed to load top games: {e}")
+            self.controller.conn.rollback()
+
+
+# The frame for the "Popular & Recommended" tab.
+class PopularFrame(ttk.Frame):
+    # Initializes the popular games and recommendations UI.
+    def __init__(self, parent, controller):
+        ttk.Frame.__init__(self, parent, padding="10")
+        self.controller = controller
+
+        # Create notebook for sub-tabs
+        self.sub_notebook = ttk.Notebook(self)
+        self.sub_notebook.pack(fill="both", expand=True)
+
+        # Popular in Last 90 Days
+        self.popular_90_frame = ttk.Frame(self.sub_notebook, padding="10")
+        self.sub_notebook.add(self.popular_90_frame, text="Top 20 - Last 90 Days")
+
+        ttk.Label(self.popular_90_frame, text="Most Popular Games (Last 90 Days)",
+                  font=("Arial", 14)).pack(pady=10)
+
+        cols = ("Rank", "Title", "Plays", "Total Playtime", "Unique Players")
+        self.popular_90_tree = ttk.Treeview(self.popular_90_frame, columns=cols, show="headings")
+        for col in cols:
+            self.popular_90_tree.heading(col, text=col)
+        self.popular_90_tree.column("Rank", width=50, anchor="center")
+        self.popular_90_tree.column("Title", width=250)
+        self.popular_90_tree.column("Plays", width=80, anchor="center")
+        self.popular_90_tree.column("Total Playtime", width=120, anchor="center")
+        self.popular_90_tree.column("Unique Players", width=120, anchor="center")
+
+        scroll_90 = ttk.Scrollbar(self.popular_90_frame, orient="vertical", command=self.popular_90_tree.yview)
+        self.popular_90_tree.configure(yscrollcommand=scroll_90.set)
+        scroll_90.pack(side="right", fill="y")
+        self.popular_90_tree.pack(fill="both", expand=True)
+
+        # Popular Among Followed Users
+        self.followed_frame = ttk.Frame(self.sub_notebook, padding="10")
+        self.sub_notebook.add(self.followed_frame, text="Top 20 - Followed Users")
+
+        ttk.Label(self.followed_frame, text="Most Popular Among Users You Follow",
+                  font=("Arial", 14)).pack(pady=10)
+
+        cols_followed = ("Rank", "Title", "Plays", "Total Playtime", "Players Following")
+        self.followed_tree = ttk.Treeview(self.followed_frame, columns=cols_followed, show="headings")
+        for col in cols_followed:
+            self.followed_tree.heading(col, text=col)
+        self.followed_tree.column("Rank", width=50, anchor="center")
+        self.followed_tree.column("Title", width=250)
+        self.followed_tree.column("Plays", width=80, anchor="center")
+        self.followed_tree.column("Total Playtime", width=120, anchor="center")
+        self.followed_tree.column("Players Following", width=120, anchor="center")
+
+        scroll_followed = ttk.Scrollbar(self.followed_frame, orient="vertical", command=self.followed_tree.yview)
+        self.followed_tree.configure(yscrollcommand=scroll_followed.set)
+        scroll_followed.pack(side="right", fill="y")
+        self.followed_tree.pack(fill="both", expand=True)
+
+        # New Releases This Month
+        self.new_releases_frame = ttk.Frame(self.sub_notebook, padding="10")
+        self.sub_notebook.add(self.new_releases_frame, text="Top 5 New Releases")
+
+        ttk.Label(self.new_releases_frame, text="Top 5 New Releases This Month",
+                  font=("Arial", 14)).pack(pady=10)
+
+        cols_new = ("Rank", "Title", "Release Date", "Platform", "Publisher")
+        self.new_releases_tree = ttk.Treeview(self.new_releases_frame, columns=cols_new, show="headings")
+        for col in cols_new:
+            self.new_releases_tree.heading(col, text=col)
+        self.new_releases_tree.column("Rank", width=50, anchor="center")
+        self.new_releases_tree.column("Title", width=250)
+        self.new_releases_tree.column("Release Date", width=100, anchor="center")
+        self.new_releases_tree.column("Platform", width=150)
+        self.new_releases_tree.column("Publisher", width=150)
+
+        scroll_new = ttk.Scrollbar(self.new_releases_frame, orient="vertical", command=self.new_releases_tree.yview)
+        self.new_releases_tree.configure(yscrollcommand=scroll_new.set)
+        scroll_new.pack(side="right", fill="y")
+        self.new_releases_tree.pack(fill="both", expand=True)
+
+        # Recommendations
+        self.recommendations_frame = ttk.Frame(self.sub_notebook, padding="10")
+        self.sub_notebook.add(self.recommendations_frame, text="Recommended For You")
+
+        ttk.Label(self.recommendations_frame, text="Recommended Games Based on Your History",
+                  font=("Arial", 14)).pack(pady=10)
+
+        cols_rec = ("Title", "Reason", "Match Score", "Avg Rating")
+        self.recommendations_tree = ttk.Treeview(self.recommendations_frame, columns=cols_rec, show="headings")
+        for col in cols_rec:
+            self.recommendations_tree.heading(col, text=col)
+        self.recommendations_tree.column("Title", width=200)
+        self.recommendations_tree.column("Reason", width=250)
+        self.recommendations_tree.column("Match Score", width=100, anchor="center")
+        self.recommendations_tree.column("Avg Rating", width=100, anchor="center")
+
+        scroll_rec = ttk.Scrollbar(self.recommendations_frame, orient="vertical",
+                                   command=self.recommendations_tree.yview)
+        self.recommendations_tree.configure(yscrollcommand=scroll_rec.set)
+        scroll_rec.pack(side="right", fill="y")
+        self.recommendations_tree.pack(fill="both", expand=True)
+
+        # Refresh button
+        refresh_btn = ttk.Button(self.recommendations_frame, text="Refresh Recommendations",
+                                 command=lambda: self.refresh_recommendations())
+        refresh_btn.pack(pady=10)
+
+        # Bind sub-notebook tab change to load data on demand
+        self.sub_notebook.bind("<<NotebookTabChanged>>", self.on_subtab_changed)
+
+    # Refresh recommendations (clear and reload)
+    def refresh_recommendations(self):
+        for item in self.recommendations_tree.get_children():
+            self.recommendations_tree.delete(item)
+        self.load_recommendations()
+
+    # Handles sub-tab changes to load data on demand.
+    def on_subtab_changed(self, event):
+        selected_tab = event.widget.select()
+        tab_text = event.widget.tab(selected_tab, "text")
+
+        if tab_text == "Recommended For You" and not self.recommendations_tree.get_children():
+            # Only load if empty (first time)
+            self.load_recommendations()
+
+    # Loads all data for this tab.
+    def load_data(self):
+        self.load_popular_90_days()
+        self.load_popular_followed()
+        self.load_new_releases()
+        # Don't load recommendations immediately - wait for user to click the tab
+
+    # Loads top 20 most popular games in last 90 days.
+    def load_popular_90_days(self):
+        for item in self.popular_90_tree.get_children():
+            self.popular_90_tree.delete(item)
+
+        try:
+            sql = """
+                SELECT g.title, COUNT(*) as playcount, SUM(pl.duration) as totalplaytime, 
+                       COUNT(DISTINCT pl.userid) as uniqueplayers
+                FROM plays pl
+                JOIN videogame g ON pl.gameid = g.gameid
+                WHERE pl.playdatetime >= CURRENT_DATE - INTERVAL '90 days'
+                GROUP BY g.title
+                ORDER BY playcount DESC, totalplaytime DESC
+                LIMIT 20
+            """
+            self.controller.curs.execute(sql)
+
+            for idx, row in enumerate(self.controller.curs.fetchall(), 1):
+                title, plays, playtime, players = row
+                playtime_str = format_duration(playtime)
+                self.popular_90_tree.insert("", "end", values=(
+                    idx, title, plays, playtime_str, players
+                ))
+
+        except Exception as e:
+            messagebox.showerror("Database Error", f"Failed to load popular games: {e}")
+            self.controller.conn.rollback()
+
+    # Loads top 20 games popular among followed users.
+    def load_popular_followed(self):
+        for item in self.followed_tree.get_children():
+            self.followed_tree.delete(item)
+
+        if not self.controller.current_user_id:
+            return
+
+        try:
+            sql = """
+                SELECT g.title, COUNT(*) as playcount, SUM(pl.duration) as totalplaytime,
+                       COUNT(DISTINCT pl.userid) as uniqueplayers
+                FROM plays pl
+                JOIN videogame g ON pl.gameid = g.gameid
+                WHERE pl.userid IN (
+                    SELECT followedid FROM follows WHERE followerid = %s
+                )
+                GROUP BY g.title
+                ORDER BY playcount DESC, totalplaytime DESC
+                LIMIT 20
+            """
+            self.controller.curs.execute(sql, (self.controller.current_user_id,))
+
+            for idx, row in enumerate(self.controller.curs.fetchall(), 1):
+                title, plays, playtime, players = row
+                playtime_str = format_duration(playtime)
+                self.followed_tree.insert("", "end", values=(
+                    idx, title, plays, playtime_str, players
+                ))
+
+        except Exception as e:
+            messagebox.showerror("Database Error", f"Failed to load followed games: {e}")
+            self.controller.conn.rollback()
+
+    # Loads top 5 new releases this month.
+    def load_new_releases(self):
+        for item in self.new_releases_tree.get_children():
+            self.new_releases_tree.delete(item)
+
+        try:
+            sql = """
+                SELECT g.title, gp.releasedate, 
+                       STRING_AGG(DISTINCT p.name, ', ') as platforms,
+                       STRING_AGG(DISTINCT c.name, ', ') as publishers
+                FROM videogame g
+                JOIN gameplatform gp ON g.gameid = gp.gameid
+                LEFT JOIN platform p ON gp.platformid = p.platformid
+                LEFT JOIN gamepublisher gpub ON g.gameid = gpub.gameid
+                LEFT JOIN company c ON gpub.companyid = c.companyid
+                WHERE EXTRACT(YEAR FROM gp.releasedate) = EXTRACT(YEAR FROM CURRENT_DATE)
+                  AND EXTRACT(MONTH FROM gp.releasedate) = EXTRACT(MONTH FROM CURRENT_DATE)
+                GROUP BY g.title, gp.releasedate
+                ORDER BY gp.releasedate DESC
+                LIMIT 5
+            """
+            self.controller.curs.execute(sql)
+
+            for idx, row in enumerate(self.controller.curs.fetchall(), 1):
+                title, release_date, platforms, publishers = row
+                date_str = release_date.strftime("%Y-%m-%d") if release_date else "N/A"
+                self.new_releases_tree.insert("", "end", values=(
+                    idx, title, date_str, platforms or "N/A", publishers or "N/A"
+                ))
+
+        except Exception as e:
+            messagebox.showerror("Database Error", f"Failed to load new releases: {e}")
+            self.controller.conn.rollback()
+
+    # Loads personalized game recommendations.
+    def load_recommendations(self):
+        for item in self.recommendations_tree.get_children():
+            self.recommendations_tree.delete(item)
+
+        if not self.controller.current_user_id:
+            return
+
+        try:
+            # Simplified and optimized recommendation query
+            sql_preferences = """
+                WITH user_games AS (
+                    -- Games user already has
+                    SELECT DISTINCT cg.gameid
+                    FROM collectiongame cg
+                    JOIN collection c ON cg.collectionid = c.collectionid
+                    WHERE c.userid = %s
+                ),
+                user_genres AS (
+                    -- Top 3 favorite genres
+                    SELECT gg.genreid
+                    FROM user_games ug
+                    JOIN gamegenre gg ON ug.gameid = gg.gameid
+                    GROUP BY gg.genreid
+                    ORDER BY COUNT(*) DESC
+                    LIMIT 3
+                ),
+                user_developers AS (
+                    -- Top 3 favorite developers
+                    SELECT gd.companyid
+                    FROM user_games ug
+                    JOIN gamedeveloper gd ON ug.gameid = gd.gameid
+                    GROUP BY gd.companyid
+                    ORDER BY COUNT(*) DESC
+                    LIMIT 3
+                )
+                SELECT DISTINCT ON (g.gameid) g.gameid, g.title,
+                       CASE 
+                           WHEN gg.genreid IS NOT NULL THEN 'Favorite Genre'
+                           WHEN gd.companyid IS NOT NULL THEN 'Favorite Developer'
+                           ELSE 'Popular Choice'
+                       END as reason,
+                       (CASE WHEN gg.genreid IS NOT NULL THEN 3 ELSE 0 END +
+                        CASE WHEN gd.companyid IS NOT NULL THEN 3 ELSE 0 END) as score,
+                       COALESCE(
+                           (SELECT AVG(starrating) FROM purchases WHERE gameid = g.gameid),
+                           0
+                       ) as avg_rating
+                FROM videogame g
+                LEFT JOIN gamegenre gg ON g.gameid = gg.gameid AND gg.genreid IN (SELECT genreid FROM user_genres)
+                LEFT JOIN gamedeveloper gd ON g.gameid = gd.gameid AND gd.companyid IN (SELECT companyid FROM user_developers)
+                WHERE g.gameid NOT IN (SELECT gameid FROM user_games)
+                  AND (gg.genreid IS NOT NULL OR gd.companyid IS NOT NULL)
+                ORDER BY g.gameid, score DESC, avg_rating DESC
+                LIMIT 20
+            """
+
+            self.controller.curs.execute(sql_preferences, (self.controller.current_user_id,))
+            results = self.controller.curs.fetchall()
+
+            if not results:
+                # Fallback: show highly rated games
+                sql_fallback = """
+                    SELECT DISTINCT g.gameid, g.title, 'Highly Rated' as reason, 
+                           3 as score, COALESCE(AVG(pu.starrating), 0) as avg_rating
+                    FROM videogame g
+                    LEFT JOIN purchases pu ON g.gameid = pu.gameid
+                    WHERE g.gameid NOT IN (
+                        SELECT DISTINCT cg.gameid
+                        FROM collectiongame cg
+                        JOIN collection c ON cg.collectionid = c.collectionid
+                        WHERE c.userid = %s
+                    )
+                    GROUP BY g.gameid, g.title
+                    HAVING AVG(pu.starrating) >= 4
+                    ORDER BY avg_rating DESC
+                    LIMIT 20
+                """
+                self.controller.curs.execute(sql_fallback, (self.controller.current_user_id,))
+                results = self.controller.curs.fetchall()
+
+            for row in results:
+                game_id, title, reason, score, avg_rating = row
+                rating_str = f"{avg_rating:.1f} ★" if avg_rating > 0 else "N/A"
+                self.recommendations_tree.insert("", "end", values=(
+                    title, reason, f"{score}", rating_str
+                ))
+
+        except Exception as e:
+            messagebox.showerror("Database Error", f"Failed to load recommendations: {e}")
+            self.controller.conn.rollback()
 
 
 # Main execution block to run the application.
