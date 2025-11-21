@@ -1726,19 +1726,17 @@ class PopularFrame(ttk.Frame):
 
         try:
             sql = """
-                SELECT g.title, gp.releasedate, 
-                       STRING_AGG(DISTINCT p.name, ', ') as platforms,
-                       STRING_AGG(DISTINCT c.name, ', ') as publishers
+                SELECT g.title, gp.releasedate,
+                STRING_AGG(DISTINCT p.name, ', ') AS platforms,
+                STRING_AGG(DISTINCT c.name, ', ') AS publishers
                 FROM videogame g
                 JOIN gameplatform gp ON g.gameid = gp.gameid
                 LEFT JOIN platform p ON gp.platformid = p.platformid
                 LEFT JOIN gamepublisher gpub ON g.gameid = gpub.gameid
                 LEFT JOIN company c ON gpub.companyid = c.companyid
-                WHERE EXTRACT(YEAR FROM gp.releasedate) = EXTRACT(YEAR FROM CURRENT_DATE)
-                  AND EXTRACT(MONTH FROM gp.releasedate) = EXTRACT(MONTH FROM CURRENT_DATE)
                 GROUP BY g.title, gp.releasedate
                 ORDER BY gp.releasedate DESC
-                LIMIT 5
+                LIMIT 5;
             """
             self.controller.curs.execute(sql)
 
