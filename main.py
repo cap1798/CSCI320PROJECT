@@ -1489,8 +1489,10 @@ class ProfileFrame(ttk.Frame):
                 """
             else:  # combined
                 sql = """
-                    SELECT g.title, pu.starrating, COALESCE(SUM(pl.duration), 0) as totalplaytime,
-                           (COALESCE(pu.starrating, 0) * COALESCE(SUM(pl.duration), 0)) as score
+                    SELECT g.title, 
+                           COALESCE(pu.starrating, 1) as rating,
+                           COALESCE(SUM(pl.duration), 1) as totalplaytime,
+                           (COALESCE(pu.starrating, 1) * COALESCE(SUM(pl.duration), 1)) as score
                     FROM videogame g
                     LEFT JOIN purchases pu ON g.gameid = pu.gameid AND pu.userid = %s
                     LEFT JOIN plays pl ON g.gameid = pl.gameid AND pl.userid = %s
